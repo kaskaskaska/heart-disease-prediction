@@ -1,0 +1,305 @@
+
+```{r}
+install.packages('tidyverse')
+install.packages('ggcorrplot')
+install.packages('caret')
+```
+```{r}
+library(tidyverse)
+library(ggcorrplot)
+Heart_dissease_DS <- readr::read_csv("Heart_Disease_Prediction.csv")
+Heart_dissease_DS
+```
+```{r}
+----OPIS KOLUMN!----
+
+SEX-Gender of the patient (1 = male, 0 = female)
+  
+Chest pain type - odczuwalny ból w klatce w skali od 1-4 
+
+BP -  Resting blood pressure (mm Hg) 
+
+Cholesterol - Serum cholesterol level (mg/dl)
+
+FBS over 120 - Fasting blood sugar > 120 mg/dl (1 = yes, 0 = no)
+
+EKG results - Wynik spoczynkowego badania EKG 0,1,albo 2  gdzie: 
+-0 Normalny.
+-1 Anomalie fali ST-T (może sugerować niedokrwienie).
+-2 Przerost lewej komory (poważniejsze).
+
+MAX HR - Maximum heart rate achieved during exercise
+
+Exercise angina - Dławica piersiowa wywołana wysiłkiem. Czy podczas biegania pacjenta bolała klatka piersiowa (1 = yes, 0 = no) 
+
+ST depression - Obniżenie odcinka ST w zapisie EKG wywołane wysiłkiem względem spoczynku. 
+
+Slope of ST- Nachylenie szczytowego odcinka ST podczas wysiłku
+1: Wznoszące (Upsloping) – zazwyczaj norma przy wysiłku.
+2: Płaskie (Flat) – podejrzane.
+3: Zstępujące (Downsloping) – zazwyczaj objaw patologiczny.
+
+Number of vessels fluro -Liczba głównych naczyń krwionośnych (0 do 3) zabarwionych podczas fluoroskopii.
+Badanie pokazuje drożne naczynia. Im więcej naczyń widać (są drożne), tym zazwyczaj lepiej
+
+Thallium - Wynik scyntygrafii talowej (badanie przepływu krwi przez serce).
+3: Normalny przepływ.
+6: Stały ubytek (tkanka martwa/blizna po zawale).
+7: Odwracalny ubytek (niedokrwienie pod obciążeniem).
+```
+
+```{r}
+#zaczynam od szybkiego przejrzenia danych w celu znalezienia anomalii np ciśnienie równe 0 itp 
+summary(Heart_dissease_DS)
+```
+```{r}
+#sprawdzam typy danych w każdej kolumnie
+dplyr::glimpse(Heart_dissease_DS) 
+```
+
+
+```{r}
+#sprawdzenie czy w zbiorze danych nie ma danych o typie NULL!
+any(is.na(Heart_dissease_DS))
+colSums(is.na(Heart_dissease_DS))
+#jak widać nie ma żadnych ,,śmiecziowych" danych można przejść dalej do zmiany typów danych
+```
+```{r}
+#zaczyanm od przygotowania zmiennej celu w tym przypadku będzie to kolumna Heart Disease
+table(Heart_dissease_DS$`Heart Disease`)
+#chce aby te dwie wartości były binarne 0 dla Absence 1 dla Presence: 
+#tWORZE nową kolumnę: 
+Heart_dissease_DS$TARGET <- ifelse(Heart_dissease_DS$`Heart Disease`== "Presence", 1,0)
+
+```
+```{r}
+table(Heart_dissease_DS$TARGET) #działa ! 
+```
+```{r}
+#Konwersja na FACTOR po to żeby model nie ,,myślał" że ból w skali 2 jest 2 razy mniejszy od bóluw skali 4! 
+# Zmienne, które są grupami, a nie miarami:
+cols_to_factor <- c("Sex", "Chest pain type", "FBS over 120", 
+                    "EKG results", "Exercise angina", "Slope of ST", 
+                    "Number of vessels fluro", "Thallium", "TARGET") 
+# Pętla, zamienijąca dane na Factor 
+Heart_dissease_DS[cols_to_factor] <- lapply(Heart_dissease_DS[cols_to_factor], as.factor)
+
+summary(Heart_dissease_DS) 
+# jak widać nie mam średniej w tych kolumach a dokładne wartości w grupach np ból z skali 1 zgłosiło 20 osób
+```
+
+```{r}
+#mając odpowiednie typy danych można przejść do stworzenia macierzy kowarancji, robie to po to zeby sprawdzic czy dane kolumny nie są skorelowane, jeżeli tak będzie będe musiał usunąc kolumny o dużej korelacji ponieważ model regresji logistycznej dałby zły wynik lub w oógle by nie był uzyteczny
+# Wybieramy tylko kolumny, które są miarami/liczbami ciągłymi ponieważ liczymy koleracje pearsona czyli linową zależność której nie da się w sensowy spsoó przenieć na dane nei ciągłe, na przykład: ból w skali 4 wcale nie musi być 2 razy mocniejszy od bólu w skali 2
+# Dodajemy też TARGET, żeby zobaczyć co koreluje z chorobą
+Heart_dissease_DS$TARGET <- as.numeric(as.character(Heart_dissease_DS$TARGET))
+
+library(tidyverse)
+library(ggcorrplot)
+
+numeric_data <- Heart_dissease_DS %>% 
+  dplyr::select(Age, BP, Cholesterol, `Max HR`, `ST depression`, TARGET)
+
+cor_matrix <- cor(numeric_data)
+
+ggcorrplot(cor_matrix, 
+           lab = TRUE, 
+           type = "upper", 
+           method = "square",
+           show.diag = TRUE,
+           colors = c("blue", "white", "red"), 
+           title = "Macierz korelacji")
+
+# WNIOSKI:
+# 1. Brak silnej współliniowości:
+#    Wszystkie zmienne objaśniające (niezależne) wykazują niską korelację między sobą 
+#    (brak wartości bliskich 1.0 lub -1.0 poza przekątną).
+#
+# 2. Brak konieczności usuwania zmiennych:
+#    Ponieważ żaden parametr medyczny nie jest "kopią" innego (np. Wiek i Ciśnienie 
+#    nie są ze sobą silnie powiązane liniowo), możemy bezpiecznie użyć wszystkich 
+#    zmiennych liczbowych w modelu regresji logistycznej.
+#
+# 3. Niezależność informacji:
+#    Niskie korelacje oznaczają, że każda cecha dostarcza modelowi unikalnych informacji 
+#    o pacjencie, co potencjalnie zwiększa szansę na trafną diagnozę, gdy połączymy 
+#    je wszystkie razem.
+```
+```{r}
+summary(model)
+```
+
+```{r}
+library(caret)
+
+# --- KROK 1: CZYSZCZENIE DANYCH ---
+# Tworzymy kopię danych do symulacji
+data_for_simulation <- Heart_dissease_DS
+
+# Usuwamy kolumnę "Heart Disease", jeśli istnieje po to żeby nie dopuscić do oszukiwania przez model, w takim wypadku uzyskalibyśmy dokładnośc 100% co nie jest możliwe
+if("Heart Disease" %in% names(data_for_simulation)) {
+  data_for_simulation$`Heart Disease` <- NULL
+}
+
+# Upewniamy się, że TARGET jest Factorem po to żeby funckja wiedziała że to są dwie odzielnne grupy czyli 0 dla osoby zdrowej 1 dla osoby chorej!
+data_for_simulation$TARGET <- as.factor(data_for_simulation$TARGET)
+
+cat("Model będzie uczył się na kolumnach:\n")
+print(names(data_for_simulation))
+
+# --- KROK 2: PRZYGOTOWANIE ZMIENNYCH ---
+liczba_prob <- 100
+
+# Wektory na wyniki, w których będą zbierane dane z każder iteracji pętli:
+wyniki_acc  <- numeric() # Dokładność
+wyniki_sens <- numeric() # Czułość (Sensitivity)
+wyniki_spec <- numeric() # Swoistość (Specificity)
+
+#ZSUMOWANA macierz pomyłek:
+total_conf_matrix <- matrix(0, nrow = 2, ncol = 2) 
+cat("\nRozpoczynam symulację Monte Carlo (", liczba_prob, " prób)...\n")
+
+# --- KROK 3: GŁÓWNA PĘTLA ---
+for(i in 1:liczba_prob) {
+  
+  # Losowy podział
+  train_indices <- createDataPartition(data_for_simulation$TARGET, p = 0.75, list = FALSE)
+  train_data <- data_for_simulation[train_indices, ]
+  test_data  <- data_for_simulation[-train_indices, ]
+  
+  # Blok try-catch, jest on po to żeby pętlą działała mimo wszystko a nie skończyła dzialanie przez "pechową próbkę"!
+  try({
+    #BUDOWA MODELU
+    model <- glm(TARGET ~ ., data = train_data, family = "binomial") # . oznacza że biorę wszystkie kolumny i na nich ucze model, 
+    #failmy binomialinformuje R, że to Regresja Logistyczna
+    # Predykcja
+    probs <- predict(model, newdata = test_data, type = "response") # type = "response" zamienia surowe wyniki matematyczne na prawdopobienstwo 
+    predicted_classes <- ifelse(probs > 0.5, 1, 0) # Decyzja: Jeśli szansa > 50%, uznajemy pacjenta za chorego!
+    
+    # Macierz pomyłek dla TEJ JEDNEJ iteracji
+    # Wiersze = Prognoza, Kolumny = Prawda
+    cm <- table(factor(predicted_classes, levels=c(0,1)), 
+                factor(test_data$TARGET, levels=c(0,1)))
+    
+    # Wyciągamy wartości (TN, FP, FN, TP)
+    TN <- cm[1,1] # True Negative
+    FP <- cm[2,1] # False Positive
+    FN <- cm[1,2] # False Negative
+    TP <- cm[2,2] # True Positive
+    
+    # --- WYLICZANIE SATYSDTK ---
+    
+    # 1. Dokładność (Accuracy)
+    acc <- sum(diag(cm)) / sum(cm)
+    # 2. Czułość (Sensitivity) = TP / (TP + FN) -> Wykrywalność chorych
+    sens <- TP / (TP + FN)
+    # 3. Swoistość (Specificity) = TN / (TN + FP) -> Potwierdzanie zdrowych
+    spec <- TN / (TN + FP)
+    
+    # Zapisujemy wyniki do wektorów (jeśli nie ma dzielenia przez zero)
+    if(!is.na(sens) & !is.na(spec)) {
+      wyniki_acc  <- c(wyniki_acc, acc)
+      wyniki_sens <- c(wyniki_sens, sens)
+      wyniki_spec <- c(wyniki_spec, spec)
+      
+      # Dodajemy do sumy ogólnej tylko udane próby
+      total_conf_matrix <- total_conf_matrix + cm
+    }
+    
+  }, silent = TRUE) # silent = TRUE odpowiada za to żeby nie wyświetlać fali błedów w konsoli jeżeli trafi się ,,pechowa próbka" 
+}
+
+# --- KROK 4: WYNIKI ---
+
+# Obliczamy średnie i odchylenia
+mean_acc <- mean(wyniki_acc); sd_acc <- sd(wyniki_acc)
+mean_sens <- mean(wyniki_sens); sd_sens <- sd(wyniki_sens)
+mean_spec <- mean(wyniki_spec); sd_spec <- sd(wyniki_spec)
+
+cat("\n=======================================================\n")
+cat("   WYNIKI MODELU (Monte Carlo, 100 prób)\n")
+cat("=======================================================\n\n")
+
+cat("-------------------------------------------------------\n")
+cat(sprintf("1. Dokładność (Accuracy):    %.1f%% ± %.1f%%\n", mean_acc * 100, sd_acc * 100))
+cat(sprintf("   (Przedział typowy: %.1f%% - %.1f%%)\n\n", (mean_acc - sd_acc)*100, (mean_acc + sd_acc)*100))
+
+cat(sprintf("2. Czułość (Sensitivity):    %.1f%% ± %.1f%%\n", mean_sens * 100, sd_sens * 100))
+cat("   (Zdolność do wykrywania osób chorych)\n\n")
+
+cat(sprintf("3. Swoistość (Specificity):  %.1f%% ± %.1f%%\n", mean_spec * 100, sd_spec * 100))
+cat("   (Zdolność do potwierdzania osób zdrowych)\n")
+cat("-------------------------------------------------------\n")
+
+# Wyświetlamy zsumowaną macierz dla weryfikacji liczbowej
+colnames(total_conf_matrix) <- c("Prawda: Zdrowy", "Prawda: Chory")
+rownames(total_conf_matrix) <- c("Prognoza: Zdrowy", "Prognoza: Chory")
+
+cat("\nPodgląd: Zsumowana Macierz Pomyłek:\n")
+print(total_conf_matrix)
+
+# Histogram dla głównej miary (Dokładności) z poprawnym zoomem
+min_x <- min(wyniki_acc) - 0.05
+max_x <- max(wyniki_acc) + 0.05
+hist(wyniki_acc, 
+     main="Rozkład Dokładności (Accuracy)", 
+     xlab="Dokładność", 
+     col="cornflowerblue", 
+     breaks=15, 
+     xlim=c(min_x, max_x))
+abline(v = mean_acc, col = "red", lwd = 2, lty = 2)
+```
+```
+
+
+
+
+```{r}
+# --- WNIOSKI Z WALIDACJI MODELU (Metoda Monte Carlo, 100 powtórzeń) ---
+#
+# 1. Stabilność i Ogólna Skuteczność:
+#    Średnia dokładność modelu wynosi 83.78%. Jest to wynik bardzo dobry dla
+#    modelu liniowego (Regresja Logistyczna).
+#    Szeroki zakres wyników (Min: 71.64%, Max: 94.03%) potwierdza, że poleganie ####UWAGA za każdym przepuszczeniem modelu te wartości się wahają w pewnym stopniu####
+#    na pojedynczym podziale zbioru (train/test) byłoby błędem metodologicznym.
+#    Dzięki symulacji znamy realną, uśrednioną wydajność modelu.
+#
+# 2. Analiza Błędów (Zsumowana Macierz Pomyłek):
+#    Model podjął łącznie decyzję ok. 6700 razy (w 100 symulacjach).
+#    - Prawidłowe diagnozy (TN + TP): 5501 przypadków.
+#    - Błędne diagnozy (FN + FP): 1065 przypadków.
+#
+# 3. Rodzaj popełnianych błędów (Kluczowe w medycynie!):
+#    - False Negative (Przeoczenie choroby): 625 przypadków.
+#    - False Positive (Fałszywy alarm): 440 przypadków.
+#
+#    Wniosek kliniczny: Liczba przeoczeń (625) jest wyraźnie wyższa niż liczba
+#    fałszywych alarmów (440). Oznacza to, że model jest nieco "konserwatywny"
+#    – ma tendencję do uznawania pacjenta za zdrowego, gdy nie ma 100% pewności.
+#
+# 4. Parametry diagnostyczne (wyliczone z sumy):
+#    - Czułość (Sensitivity - zdolność wykrywania chorych): 
+#      2315 / (2315 + 625) = ok. 78.7%
+#    - Swoistość (Specificity - zdolność potwierdzania zdrowia): 
+#      3186 / (3186 + 440) = ok. 87.9%
+#
+#    Podsumowując: Model lepiej radzi sobie z identyfikacją osób zdrowych (88%)
+#    niż z wykrywaniem osób chorych (79%). W przyszłości warto rozważyć zmianę
+#    progu decyzyjnego (threshold) z 0.5 na niższy (np. 0.4), aby zwiększyć
+#    wykrywalność choroby kosztem częstszych fałszywych alarmów.
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
